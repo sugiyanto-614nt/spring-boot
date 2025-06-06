@@ -21,12 +21,15 @@ import java.util.Collection;
 import java.util.EnumSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 
+import org.springframework.boot.actuate.autoconfigure.endpoint.PropertiesEndpointAccessResolver;
 import org.springframework.boot.actuate.autoconfigure.endpoint.expose.EndpointExposure;
 import org.springframework.boot.actuate.autoconfigure.endpoint.expose.IncludeExcludeEndpointFilter;
+import org.springframework.boot.actuate.endpoint.Access;
+import org.springframework.boot.actuate.endpoint.EndpointAccessResolver;
 import org.springframework.boot.actuate.endpoint.EndpointId;
 import org.springframework.boot.actuate.endpoint.ExposableEndpoint;
 import org.springframework.boot.actuate.endpoint.annotation.Endpoint;
@@ -50,7 +53,7 @@ import org.springframework.util.ClassUtils;
 import org.springframework.util.ConcurrentReferenceHashMap;
 
 /**
- * A condition that checks if an endpoint is available (i.e. enabled and exposed).
+ * A condition that checks if an endpoint is available (i.e. accessible and exposed).
  *
  * @author Brian Clozel
  * @author Stephane Nicoll
@@ -62,20 +65,17 @@ class OnAvailableEndpointCondition extends SpringBootCondition {
 
 	private static final String JMX_ENABLED_KEY = "spring.jmx.enabled";
 
-	private static final String ENABLED_BY_DEFAULT_KEY = "management.endpoints.enabled-by-default";
+	private static final Map<Environment, EndpointAccessResolver> accessResolversCache = new ConcurrentReferenceHashMap<>();
 
 	private static final Map<Environment, Set<EndpointExposureOutcomeContributor>> exposureOutcomeContributorsCache = new ConcurrentReferenceHashMap<>();
 
-	private static final ConcurrentReferenceHashMap<Environment, Optional<Boolean>> enabledByDefaultCache = new ConcurrentReferenceHashMap<>();
-
 	@Override
 	public ConditionOutcome getMatchOutcome(ConditionContext context, AnnotatedTypeMetadata metadata) {
-		Environment environment = context.getEnvironment();
 		MergedAnnotation<ConditionalOnAvailableEndpoint> conditionAnnotation = metadata.getAnnotations()
 			.get(ConditionalOnAvailableEndpoint.class);
 		Class<?> target = getTarget(context, metadata, conditionAnnotation);
 		MergedAnnotation<Endpoint> endpointAnnotation = getEndpointAnnotation(target);
-		return getMatchOutcome(environment, conditionAnnotation, endpointAnnotation);
+		return getMatchOutcome(context, conditionAnnotation, endpointAnnotation);
 	}
 
 	private Class<?> getTarget(ConditionContext context, AnnotatedTypeMetadata metadata,
@@ -108,47 +108,40 @@ class OnAvailableEndpointCondition extends SpringBootCondition {
 		return getEndpointAnnotation(extension.getClass("endpoint"));
 	}
 
-	private ConditionOutcome getMatchOutcome(Environment environment,
+	private ConditionOutcome getMatchOutcome(ConditionContext context,
 			MergedAnnotation<ConditionalOnAvailableEndpoint> conditionAnnotation,
 			MergedAnnotation<Endpoint> endpointAnnotation) {
 		ConditionMessage.Builder message = ConditionMessage.forCondition(ConditionalOnAvailableEndpoint.class);
+		Environment environment = context.getEnvironment();
 		EndpointId endpointId = EndpointId.of(environment, endpointAnnotation.getString("id"));
-		ConditionOutcome enablementOutcome = getEnablementOutcome(environment, endpointAnnotation, endpointId, message);
-		ConditionOutcome exposureOutcome = (!enablementOutcome.isMatch()) ? null
-				: getExposureOutcome(environment, conditionAnnotation, endpointAnnotation, endpointId, message);
-		return (exposureOutcome != null) ? exposureOutcome
-				: ConditionOutcome.noMatch(message.because("not enabled or exposed"));
-	}
-
-	private ConditionOutcome getEnablementOutcome(Environment environment,
-			MergedAnnotation<Endpoint> endpointAnnotation, EndpointId endpointId, ConditionMessage.Builder message) {
-		String key = "management.endpoint." + endpointId.toLowerCaseString() + ".enabled";
-		Boolean userDefinedEnabled = environment.getProperty(key, Boolean.class);
-		if (userDefinedEnabled != null) {
-			return new ConditionOutcome(userDefinedEnabled,
-					message.because("found property " + key + " with value " + userDefinedEnabled));
+		ConditionOutcome accessOutcome = getAccessOutcome(environment, endpointAnnotation, endpointId, message);
+		if (!accessOutcome.isMatch()) {
+			return accessOutcome;
 		}
-		Boolean userDefinedDefault = isEnabledByDefault(environment);
-		if (userDefinedDefault != null) {
-			return new ConditionOutcome(userDefinedDefault, message
-				.because("no property " + key + " found so using user defined default from " + ENABLED_BY_DEFAULT_KEY));
-		}
-		boolean endpointDefault = endpointAnnotation.getBoolean("enableByDefault");
-		return new ConditionOutcome(endpointDefault,
-				message.because("no property " + key + " found so using endpoint default of " + endpointDefault));
+		ConditionOutcome exposureOutcome = getExposureOutcome(context, conditionAnnotation, endpointAnnotation,
+				endpointId, message);
+		return (exposureOutcome != null) ? exposureOutcome : ConditionOutcome.noMatch(message.because("not exposed"));
 	}
 
-	private Boolean isEnabledByDefault(Environment environment) {
-		Optional<Boolean> enabledByDefault = enabledByDefaultCache.computeIfAbsent(environment,
-				(ignore) -> Optional.ofNullable(environment.getProperty(ENABLED_BY_DEFAULT_KEY, Boolean.class)));
-		return enabledByDefault.orElse(null);
+	private ConditionOutcome getAccessOutcome(Environment environment, MergedAnnotation<Endpoint> endpointAnnotation,
+			EndpointId endpointId, ConditionMessage.Builder message) {
+		Access defaultAccess = endpointAnnotation.getEnum("defaultAccess", Access.class);
+		boolean enableByDefault = endpointAnnotation.getBoolean("enableByDefault");
+		Access access = getAccess(environment, endpointId, (enableByDefault) ? defaultAccess : Access.NONE);
+		return new ConditionOutcome(access != Access.NONE,
+				message.because("the configured access for endpoint '%s' is %s".formatted(endpointId, access)));
 	}
 
-	private ConditionOutcome getExposureOutcome(Environment environment,
+	private Access getAccess(Environment environment, EndpointId endpointId, Access defaultAccess) {
+		return accessResolversCache.computeIfAbsent(environment, PropertiesEndpointAccessResolver::new)
+			.accessFor(endpointId, defaultAccess);
+	}
+
+	private ConditionOutcome getExposureOutcome(ConditionContext context,
 			MergedAnnotation<ConditionalOnAvailableEndpoint> conditionAnnotation,
 			MergedAnnotation<Endpoint> endpointAnnotation, EndpointId endpointId, Builder message) {
 		Set<EndpointExposure> exposures = getExposures(conditionAnnotation);
-		Set<EndpointExposureOutcomeContributor> outcomeContributors = getExposureOutcomeContributors(environment);
+		Set<EndpointExposureOutcomeContributor> outcomeContributors = getExposureOutcomeContributors(context);
 		for (EndpointExposureOutcomeContributor outcomeContributor : outcomeContributors) {
 			ConditionOutcome outcome = outcomeContributor.getExposureOutcome(endpointId, exposures, message);
 			if (outcome != null && outcome.isMatch()) {
@@ -173,7 +166,8 @@ class OnAvailableEndpointCondition extends SpringBootCondition {
 		return result;
 	}
 
-	private Set<EndpointExposureOutcomeContributor> getExposureOutcomeContributors(Environment environment) {
+	private Set<EndpointExposureOutcomeContributor> getExposureOutcomeContributors(ConditionContext context) {
+		Environment environment = context.getEnvironment();
 		Set<EndpointExposureOutcomeContributor> contributors = exposureOutcomeContributorsCache.get(environment);
 		if (contributors == null) {
 			contributors = new LinkedHashSet<>();
@@ -181,15 +175,16 @@ class OnAvailableEndpointCondition extends SpringBootCondition {
 			if (environment.getProperty(JMX_ENABLED_KEY, Boolean.class, false)) {
 				contributors.add(new StandardExposureOutcomeContributor(environment, EndpointExposure.JMX));
 			}
-			contributors.addAll(loadExposureOutcomeContributors(environment));
+			contributors.addAll(loadExposureOutcomeContributors(context.getClassLoader(), environment));
 			exposureOutcomeContributorsCache.put(environment, contributors);
 		}
 		return contributors;
 	}
 
-	private List<EndpointExposureOutcomeContributor> loadExposureOutcomeContributors(Environment environment) {
+	private List<EndpointExposureOutcomeContributor> loadExposureOutcomeContributors(ClassLoader classLoader,
+			Environment environment) {
 		ArgumentResolver argumentResolver = ArgumentResolver.of(Environment.class, environment);
-		return SpringFactoriesLoader.forDefaultResourceLocation()
+		return SpringFactoriesLoader.forDefaultResourceLocation(classLoader)
 			.load(EndpointExposureOutcomeContributor.class, argumentResolver);
 	}
 
@@ -206,7 +201,7 @@ class OnAvailableEndpointCondition extends SpringBootCondition {
 
 		StandardExposureOutcomeContributor(Environment environment, EndpointExposure exposure) {
 			this.exposure = exposure;
-			String name = exposure.name().toLowerCase().replace('_', '-');
+			String name = exposure.name().toLowerCase(Locale.ROOT).replace('_', '-');
 			this.property = "management.endpoints." + name + ".exposure";
 			this.filter = new IncludeExcludeEndpointFilter<>(ExposableEndpoint.class, environment, this.property,
 					exposure.getDefaultIncludes());

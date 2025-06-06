@@ -16,10 +16,21 @@
 
 package org.springframework.boot.build.mavenplugin;
 
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import javax.inject.Inject;
+
 import org.gradle.api.DefaultTask;
 import org.gradle.api.Task;
 import org.gradle.api.artifacts.Configuration;
+import org.gradle.api.artifacts.ConfigurationContainer;
+import org.gradle.api.artifacts.dsl.DependencyHandler;
+import org.gradle.api.file.ArchiveOperations;
 import org.gradle.api.file.DirectoryProperty;
+import org.gradle.api.file.FileSystemOperations;
+import org.gradle.api.file.FileTree;
+import org.gradle.api.provider.Provider;
 import org.gradle.api.provider.SetProperty;
 import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.OutputDirectory;
@@ -32,6 +43,23 @@ import org.gradle.api.tasks.TaskAction;
  */
 public abstract class PrepareMavenBinaries extends DefaultTask {
 
+	private final FileSystemOperations fileSystemOperations;
+
+	private final Provider<Set<FileTree>> binaries;
+
+	@Inject
+	public PrepareMavenBinaries(FileSystemOperations fileSystemOperations, ArchiveOperations archiveOperations) {
+		this.fileSystemOperations = fileSystemOperations;
+		ConfigurationContainer configurations = getProject().getConfigurations();
+		DependencyHandler dependencies = getProject().getDependencies();
+		this.binaries = getVersions().map((versions) -> versions.stream()
+			.map((version) -> configurations
+				.detachedConfiguration(dependencies.create("org.apache.maven:apache-maven:" + version + ":bin@zip")))
+			.map(Configuration::getSingleFile)
+			.map(archiveOperations::zipTree)
+			.collect(Collectors.toSet()));
+	}
+
 	@OutputDirectory
 	public abstract DirectoryProperty getOutputDir();
 
@@ -40,16 +68,10 @@ public abstract class PrepareMavenBinaries extends DefaultTask {
 
 	@TaskAction
 	public void prepareBinaries() {
-		getProject().sync((sync) -> {
+		this.fileSystemOperations.sync((sync) -> {
 			sync.into(getOutputDir());
-			for (String version : getVersions().get()) {
-				Configuration configuration = getProject().getConfigurations()
-					.detachedConfiguration(getProject().getDependencies()
-						.create("org.apache.maven:apache-maven:" + version + ":bin@zip"));
-				sync.from(getProject().zipTree(configuration.getSingleFile()));
-			}
+			this.binaries.get().forEach(sync::from);
 		});
-
 	}
 
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2021-2024 the original author or authors.
+ * Copyright 2012-2025 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,11 @@
 
 package org.springframework.boot.build;
 
+import javax.inject.Inject;
+
 import org.gradle.api.DefaultTask;
 import org.gradle.api.file.DirectoryProperty;
+import org.gradle.api.file.FileSystemOperations;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.InputDirectory;
@@ -32,8 +35,12 @@ import org.gradle.api.tasks.TaskAction;
  */
 public abstract class SyncAppSource extends DefaultTask {
 
-	public SyncAppSource() {
+	private final FileSystemOperations fileSystemOperations;
+
+	@Inject
+	public SyncAppSource(FileSystemOperations fileSystemOperations) {
 		getPluginVersion().convention(getProject().provider(() -> getProject().getVersion().toString()));
+		this.fileSystemOperations = fileSystemOperations;
 	}
 
 	@InputDirectory
@@ -47,11 +54,11 @@ public abstract class SyncAppSource extends DefaultTask {
 
 	@TaskAction
 	void syncAppSources() {
-		getProject().sync((copySpec) -> {
+		this.fileSystemOperations.sync((copySpec) -> {
 			copySpec.from(getSourceDirectory());
 			copySpec.into(getDestinationDirectory());
 			copySpec.filter((line) -> line.replace("id \"org.springframework.boot\"",
-					"id \"org.springframework.boot\" version \"" + getProject().getVersion() + "\""));
+					"id \"org.springframework.boot\" version \"" + getPluginVersion().get() + "\""));
 		});
 	}
 

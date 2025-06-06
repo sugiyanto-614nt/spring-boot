@@ -24,6 +24,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import org.springframework.boot.actuate.autoconfigure.endpoint.EndpointAutoConfiguration;
+import org.springframework.boot.actuate.autoconfigure.endpoint.condition.WithTestEndpointOutcomeExposureContributor;
 import org.springframework.boot.actuate.autoconfigure.endpoint.web.WebEndpointAutoConfiguration;
 import org.springframework.boot.actuate.autoconfigure.health.HealthEndpointConfiguration.HealthEndpointGroupMembershipValidator.NoSuchHealthContributorException;
 import org.springframework.boot.actuate.autoconfigure.health.HealthEndpointReactiveWebExtensionConfiguration.WebFluxAdditionalHealthEndpointPathsConfiguration;
@@ -32,6 +33,7 @@ import org.springframework.boot.actuate.autoconfigure.health.HealthEndpointWebEx
 import org.springframework.boot.actuate.endpoint.ApiVersion;
 import org.springframework.boot.actuate.endpoint.SecurityContext;
 import org.springframework.boot.actuate.endpoint.web.WebEndpointResponse;
+import org.springframework.boot.actuate.endpoint.web.WebEndpointsSupplier;
 import org.springframework.boot.actuate.endpoint.web.WebServerNamespace;
 import org.springframework.boot.actuate.health.CompositeHealthContributor;
 import org.springframework.boot.actuate.health.DefaultHealthContributorRegistry;
@@ -345,43 +347,56 @@ class HealthEndpointAutoConfigurationTests {
 	}
 
 	@Test
+	@WithTestEndpointOutcomeExposureContributor
 	void additionalHealthEndpointsPathsTolerateHealthEndpointThatIsNotWebExposed() {
 		this.contextRunner
 			.withConfiguration(AutoConfigurations.of(DispatcherServletAutoConfiguration.class,
 					EndpointAutoConfiguration.class, WebEndpointAutoConfiguration.class))
 			.withPropertyValues("management.endpoints.web.exposure.exclude=*",
-					"management.endpoints.cloudfoundry.exposure.include=*", "spring.main.cloud-platform=cloud_foundry")
+					"management.endpoints.test.exposure.include=*")
 			.run((context) -> {
-				assertThat(context).hasSingleBean(MvcAdditionalHealthEndpointPathsConfiguration.class);
 				assertThat(context).hasNotFailed();
+				assertThat(context).hasSingleBean(HealthEndpoint.class);
+				assertThat(context).hasSingleBean(HealthEndpointWebExtension.class);
+				assertThat(context.getBean(WebEndpointsSupplier.class).getEndpoints()).isEmpty();
+				assertThat(context).hasSingleBean(MvcAdditionalHealthEndpointPathsConfiguration.class);
 			});
 	}
 
 	@Test
+	@WithTestEndpointOutcomeExposureContributor
 	void additionalJerseyHealthEndpointsPathsTolerateHealthEndpointThatIsNotWebExposed() {
 		this.contextRunner
 			.withConfiguration(
 					AutoConfigurations.of(EndpointAutoConfiguration.class, WebEndpointAutoConfiguration.class))
-			.withClassLoader(new FilteredClassLoader(DispatcherServlet.class))
-			.withPropertyValues("management.endpoints.web.exposure.exclude=*",
-					"management.endpoints.cloudfoundry.exposure.include=*", "spring.main.cloud-platform=cloud_foundry")
+			.withClassLoader(
+					new FilteredClassLoader(Thread.currentThread().getContextClassLoader(), DispatcherServlet.class))
 			.withInitializer(ConditionEvaluationReportLoggingListener.forLogLevel(LogLevel.INFO))
+			.withPropertyValues("management.endpoints.web.exposure.exclude=*",
+					"management.endpoints.test.exposure.include=*")
 			.run((context) -> {
-				assertThat(context).hasSingleBean(JerseyAdditionalHealthEndpointPathsConfiguration.class);
 				assertThat(context).hasNotFailed();
+				assertThat(context).hasSingleBean(HealthEndpoint.class);
+				assertThat(context).hasSingleBean(HealthEndpointWebExtension.class);
+				assertThat(context.getBean(WebEndpointsSupplier.class).getEndpoints()).isEmpty();
+				assertThat(context).hasSingleBean(JerseyAdditionalHealthEndpointPathsConfiguration.class);
 			});
 	}
 
 	@Test
+	@WithTestEndpointOutcomeExposureContributor
 	void additionalReactiveHealthEndpointsPathsTolerateHealthEndpointThatIsNotWebExposed() {
 		this.reactiveContextRunner
 			.withConfiguration(
 					AutoConfigurations.of(EndpointAutoConfiguration.class, WebEndpointAutoConfiguration.class))
 			.withPropertyValues("management.endpoints.web.exposure.exclude=*",
-					"management.endpoints.cloudfoundry.exposure.include=*", "spring.main.cloud-platform=cloud_foundry")
+					"management.endpoints.test.exposure.include=*")
 			.run((context) -> {
-				assertThat(context).hasSingleBean(WebFluxAdditionalHealthEndpointPathsConfiguration.class);
 				assertThat(context).hasNotFailed();
+				assertThat(context).hasSingleBean(HealthEndpoint.class);
+				assertThat(context).hasSingleBean(ReactiveHealthEndpointWebExtension.class);
+				assertThat(context.getBean(WebEndpointsSupplier.class).getEndpoints()).isEmpty();
+				assertThat(context).hasSingleBean(WebFluxAdditionalHealthEndpointPathsConfiguration.class);
 			});
 	}
 
@@ -505,6 +520,11 @@ class HealthEndpointAutoConfigurationTests {
 			given(groups.get("test")).willThrow(new RuntimeException("postprocessed"));
 			return groups;
 		}
+
+	}
+
+	@Configuration(proxyBeanMethods = false)
+	static class UnconditionalHealthEndpointWebExtensionConfiguration extends HealthEndpointWebExtensionConfiguration {
 
 	}
 

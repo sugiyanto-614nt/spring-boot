@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2024 the original author or authors.
+ * Copyright 2012-2025 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -50,6 +50,7 @@ import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 import org.apache.commons.compress.archivers.zip.ZipFile;
 import org.gradle.testkit.runner.BuildResult;
 import org.gradle.testkit.runner.TaskOutcome;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.TestTemplate;
 
 import org.springframework.boot.loader.tools.FileUtils;
@@ -316,18 +317,6 @@ abstract class AbstractBootArchiveIntegrationTests {
 			.task(":" + this.taskName)
 			.getOutcome()).isEqualTo(TaskOutcome.SUCCESS);
 		assertThat(this.gradleBuild.scriptProperty("layerEnablement", "enabled = true")
-			.build(this.taskName)
-			.task(":" + this.taskName)
-			.getOutcome()).isEqualTo(TaskOutcome.SUCCESS);
-	}
-
-	@TestTemplate
-	void notUpToDateWhenBuiltWithLayerToolsAndThenWithoutLayerTools() {
-		assertThat(this.gradleBuild.scriptProperty("layerTools", "")
-			.build(this.taskName)
-			.task(":" + this.taskName)
-			.getOutcome()).isEqualTo(TaskOutcome.SUCCESS);
-		assertThat(this.gradleBuild.scriptProperty("layerTools", "includeLayerTools = false")
 			.build(this.taskName)
 			.task(":" + this.taskName)
 			.getOutcome()).isEqualTo(TaskOutcome.SUCCESS);
@@ -609,6 +598,7 @@ abstract class AbstractBootArchiveIntegrationTests {
 
 	@TestTemplate
 	void dirModeAndFileModeAreApplied() throws IOException {
+		Assumptions.assumeTrue(this.gradleBuild.gradleVersionIsLessThan("9.0-milestone-1"));
 		BuildResult result = this.gradleBuild.expectDeprecationWarningsWithAtLeastVersion("8.8-rc-1")
 			.expectDeprecationMessages("The CopyProcessingSpec.setDirMode(Integer) method has been deprecated",
 					"The CopyProcessingSpec.setFileMode(Integer) method has been deprecated",
@@ -638,7 +628,7 @@ abstract class AbstractBootArchiveIntegrationTests {
 
 	protected void copyApplication(String name) throws IOException {
 		File output = new File(this.gradleBuild.getProjectDir(),
-				"src/main/java/com/example/" + this.taskName.toLowerCase() + "/" + name);
+				"src/main/java/com/example/" + this.taskName.toLowerCase(Locale.ROOT) + "/" + name);
 		output.mkdirs();
 		FileSystemUtils.copyRecursively(
 				new File("src/test/java/com/example/" + this.taskName.toLowerCase(Locale.ENGLISH) + "/" + name),

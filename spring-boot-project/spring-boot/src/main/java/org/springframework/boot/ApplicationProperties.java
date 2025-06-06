@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2024 the original author or authors.
+ * Copyright 2012-2025 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,10 @@ package org.springframework.boot;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
+import org.springframework.aot.hint.RuntimeHints;
+import org.springframework.aot.hint.RuntimeHintsRegistrar;
 import org.springframework.boot.Banner.Mode;
+import org.springframework.boot.context.properties.bind.BindableRuntimeHintsRegistrar;
 import org.springframework.boot.logging.LoggingSystemProperty;
 import org.springframework.core.env.Environment;
 
@@ -55,7 +58,7 @@ class ApplicationProperties {
 	/**
 	 * Whether initialization should be performed lazily.
 	 */
-	private boolean lazyInitialization = false;
+	private boolean lazyInitialization;
 
 	/**
 	 * Whether to log information about the application when it starts.
@@ -154,6 +157,15 @@ class ApplicationProperties {
 
 	void setWebApplicationType(WebApplicationType webApplicationType) {
 		this.webApplicationType = webApplicationType;
+	}
+
+	static class ApplicationPropertiesRuntimeHints implements RuntimeHintsRegistrar {
+
+		@Override
+		public void registerHints(RuntimeHints hints, ClassLoader classLoader) {
+			BindableRuntimeHintsRegistrar.forTypes(ApplicationProperties.class).registerHints(hints, classLoader);
+		}
+
 	}
 
 }
